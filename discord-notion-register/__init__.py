@@ -69,7 +69,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             token = gettoken(user_id)
             #tokenが登録されていない場合は、tokenを登録するようにメッセージを返す
             if token == None:
-                content_text = f"{username}のtokenが登録されていません。tokenを登録してください。"
+                content_text = f"{username}はnotionと連携していません。notionと連携するには、/notion-registerコマンドを実行してください。"
             else:
                 #tokenが登録されている場合は、notionにアクションを登録する
                 #アクション名がある場合は、アクション名を取得する
@@ -80,8 +80,11 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                 #現在時刻を取得
                 start_time = datetime.datetime.now().strftime('%Y/%m/%d %H:%M:%S')
                 action_active = True
-
-                #notionへの実際の登録処理はまだnotion APIの使い方がわからない
+                #notionにアクションを登録する
+                #notionのデータベースのIDを取得する
+                database_id = get_database_id(user_id)
+                register_result = notion_register_action(token,database_id["action_page_id"],action_name,start_time,interaction["id"])
+                logging.info('register_result : '+register_result.text)
                 #返信用のコンポーネントを作成
                 #終了ボタンを作成
                 component = {
@@ -249,7 +252,26 @@ def gettoken(user_id):
     if not entity:
         return None
     #tokenを返す
-    return entity.token
+    return entity.notion_access_token
+
+def get_database_id(user_id):
+    #Tabel Storageから各種notion databaseのIDを取得する
+    #Azure Table Storageのアカウント名とキー
+    storage_account_name = os.environ.get("STORAGE_ACCOUNT_NAME")
+    storage_account_key = os.environ.get("STORAGE_ACCOUNT_KEY")
+    table_name = "NotionToken"
+    #tableserviceオブジェクトを作成 
+    table_service = TableService(account_name=storage_account_name, account_key=storage_account_key)
+    #user_idを指定してエンティティを取得(あれば)
+    entity = table_service.get_entity(table_name, "discord", user_id)
+    #なければNoneを返す
+    if not entity:
+        return None
+    return {
+        "task_page_id": entity.task_page_id,
+        "action_page_id": entity.action_page_id,
+        "category_page_id": entity.category_page_id
+    }
 
 #notionからカテゴリのリストを取得する
 #引数はtoken、オプションとしてparent_idを指定できる
@@ -398,4 +420,40 @@ def notion_auth_url(user_id):
     url = url_base + "&state=" + url_suffix
     return url
 
+#notionにアクションを登録する
+def notion_register_action(token,database_id,action_name,start_time,intaraction_id):
+    #start_timeは開始時刻(yyyy/mm/dd HH:MM:SS)の文字列なので、ISO8601形式に変換する
+    start_time_ISO8601 = datetime.datetime.strptime(start_time, '%Y/%m/%d %H:%M:%S').isoformat()
+    url = "https://api.notion.com/v1/pages"
 
+    body = json.dumps({
+    "parent": { 
+        "database_id": database_id 
+        },
+    "properties": {
+        "アクション名" : {
+            "type": "title",
+            "title": [{
+                "text": {"content": action_name}
+            }] 
+        },
+        "時刻" : {
+            "date": {"start": start_time_ISO8601}
+        },
+        "ステータス" :{
+            "status": {"name": "進行中"}
+        },
+        "インタラクションID":{
+            "rich_text": [{"type": "text","text": {"content": intaraction_id}}]
+        }
+        }
+    }   
+    )
+    headers = {
+        "Authorization": "Bearer "+token,
+        "Content-Type": "application/json",
+        "Notion-Version": "2022-06-28"
+    }
+    logging.info('notion register action body : '+body)
+    response = requests.request("POST", url, headers=headers, data=body)
+    return response

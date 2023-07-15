@@ -86,18 +86,26 @@ def set_notion_info(user_id,notion_info):
         #tableserviceオブジェクトを作成
         table_service = TableService(account_name=storage_account_name, account_key=storage_account_key)
         #テーブルがなければ作成
-        table_service.create_table(table_name)
+        try:
+            table_service.create_table(table_name)
+        except Exception as e:
+            logging.error(e)
         #エンティティを作成
         entity = Entity()
         entity.PartitionKey = "discord"
         entity.RowKey = user_id
         #'dict' object has no attribute 'owner'というエラーが出るので、なにかまちがってる
         entity.notion_user_id = notion_info["owner"]["user"]["id"]
+        entity.notion_access_token = notion_info["access_token"]
         entity.workspace_name = notion_info["workspace_name"]
         entity.workspace_icon = notion_info["workspace_icon"]
         entity.workspace_id = notion_info["workspace_id"]
         entity.bot_id = notion_info["bot_id"]
         entity.duplicated_template_id = notion_info["duplicated_template_id"]
+        databases = get_notion_page(entity.duplicated_template_id,notion_info["access_token"])
+        entity.action_page_id = databases["action_page_id"]
+        entity.category_page_id = databases["category_page_id"]
+        entity.task_page_id = databases["task_page_id"]
         #エンティティを登録または置換
         table_service.insert_or_replace_entity(table_name, entity)
         return True
@@ -106,21 +114,37 @@ def set_notion_info(user_id,notion_info):
         return False
 
 #ルートページにアクセスして子ページを取得する関数 
-def get_notion_page_children(page_id,token):
-    url = f"https://api.notion.com/v1/search"
+def get_notion_page(page_id,token):
+
+    # APIリクエスト
+    url = f"https://api.notion.com/v1/blocks/{page_id}/children?page_size=100"
     headers = {
-        "accept": "application/json",
-        "Notion-Version": "2022-06-28",
-        "Authorization": f"Bearer {token}"
-        }
-    body = {
-        "query": "",
-        "sort": {
-            "direction": "ascending",
-            "timestamp": "last_edited_time"
-        },
-        "filter": {
-            "value": "page",
-            "property": "object"
-        },
+        "Authorization": "Bearer "+token,
+        "Content-Type": "application/json",
+        "Notion-Version": "2022-06-28"
+    }
+
+    response = requests.get(url, headers=headers)
+    response_json = response.json()
+    #resultの2つめの要素がルートページの子ページのリスト
+    block_id = response_json["results"][1]["id"]
+    url = f"https://api.notion.com/v1/blocks/{block_id}/children?page_size=100"
+    response = requests.get(url, headers=headers)
+    response_json = response.json()
+    #ルートページの子ページのリストそれぞれに対して情報を取得し、リストに格納
+    page_list = []
+    for block in response_json["results"]:
+        url = f"https://api.notion.com/v1/blocks/{block['id']}/children?page_size=100"
+        response = requests.get(url, headers=headers)
+        response_json = response.json()
+        page_list.append(response_json["results"][0]["id"])
+    action_page_id = page_list[2]
+    category_page_id = page_list[1]
+    task_page_id = page_list[0]
+
+    # 取得した各ページのIDを返す
+    return {
+        "action_page_id": action_page_id,
+        "category_page_id": category_page_id,
+        "task_page_id": task_page_id
     }
