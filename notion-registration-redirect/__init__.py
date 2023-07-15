@@ -104,3 +104,23 @@ def set_notion_info(user_id,notion_info):
     except Exception as e:
         logging.error(e)
         return False
+
+#ルートページにアクセスして子ページを取得する関数 
+def get_notion_page_children(page_id,token):
+    url = f"https://api.notion.com/v1/search"
+    headers = {
+        "accept": "application/json",
+        "Notion-Version": "2022-06-28",
+        "Authorization": f"Bearer {token}"
+        }
+    body = {
+        "query": "",
+        "sort": {
+            "direction": "ascending",
+            "timestamp": "last_edited_time"
+        },
+        "filter": {
+            "value": "page",
+            "property": "object"
+        },
+    }
